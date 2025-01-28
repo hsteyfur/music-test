@@ -10,7 +10,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report
 import requests
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
+import atexit
+import multiprocessing
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -25,7 +27,7 @@ with open('model/label_encoder.pkl', 'rb') as f:
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    data = requests
+    data = request.get_json()
     url = data.get('url')
 
 
@@ -125,15 +127,22 @@ def predict():
             predictions = model.predict(df_test)
             predictions = label_encoder.inverse_transform(predictions)
             df['label'] = predictions
-            df[['filename','label']]
+            print(df['label'].value_counts().index.to_list())
             
-            
-            return jsonify({df['label'].value_counts().index.to_list()})
+            return jsonify({
+                'predictions': df['label'].value_counts().index.to_list()
+            })
         else:
             return jsonify(f'Failed to complete')
     except requests.exceptions.RequestException as e:
         
         return jsonify({'error': f'An error occurred: {e}'}), 500
+
+def cleanup():
+    for p in multiprocessing.active_children():
+        p.terminate()
+    
+atexit.register(cleanup)
 
 if __name__ == '__main__':
     app.run(debug=True)

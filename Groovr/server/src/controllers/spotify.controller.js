@@ -183,57 +183,94 @@ const spotifyController = {
     }
   },
 
-  getRecommendations : async (req, res) => {
-    const { previewUrl } = req.body;  // The URL of the audio to analyze
-    console.log("previewUrl from controller: ", previewUrl);
+  getRecommendations: async (req, res) => {
+    const { previewUrl } = req.body;
+    console.log("Received preview URL:", previewUrl);
 
     try {
-        // Step 1: Call Flask API to get genre based on the previewUrl (audio file)
-        const flaskResponse = await axios.post('http://127.0.0.1:5000/predict', {
-            url: "https://cdnt-preview.dzcdn.net/api/1/1/d/0/2/0/d029ec2caa866126755ce1b9d0f1c56f.mp3?hdnea=exp=1738041789~acl=/api/1/1/d/0/2/0/d029ec2caa866126755ce1b9d0f1c56f.mp3*~data=user_id=0,application_id=42~hmac=1e5f6416d602f372a22437a2da73c36e55aac0617001291e2586b715e6113aab"
-        });
+      // Call Flask API with the preview URL
+      const flaskResponse = await axios.post("http://127.0.0.1:5000/predict", {
+        url: previewUrl,
+      });
 
-        // Step 2: Extract the genre from the Flask response
-        const genre = flaskResponse.data.genre;
-        if (!genre) {
-            return res.status(404).json({ message: 'No genre predicted from the audio.' });
+      console.log("Flask response:", flaskResponse.data);
+
+      // Get the predictions array from the Flask response
+      const predictions = flaskResponse.data.predictions;
+      if (!predictions || predictions.length === 0) {
+        return res
+          .status(404)
+          .json({ message: "No genres predicted from the audio." });
+      }
+
+      // Use the first predicted genre (highest confidence)
+      let primaryGenre = predictions[0];
+      console.log("Using primary genre for recommendations:", primaryGenre);
+
+      // Map 'hiphop' to 'rap' for Spotify's genre system
+      if (primaryGenre === "hiphop") {
+        primaryGenre = "rap";
+      }
+      console.log("Using primary genre for recommendations:", primaryGenre);
+
+      // Get Spotify recommendations based on the primary genre
+      const accessToken = req.user.access_token;
+      const searchResponse = await axios.get(
+        "https://api.spotify.com/v1/search",
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          params: {
+            q: `genre:${primaryGenre}`,
+            type: "track",
+            limit: 50,
+            market: "US",
+          },
         }
+      );
 
-        console.log("Predicted genre: ", genre);
+      if (!searchResponse.data.tracks || !searchResponse.data.tracks.items) {
+        console.error(
+          "No tracks found in Spotify response:",
+          searchResponse.data
+        );
+        return res
+          .status(404)
+          .json({ message: "No tracks found for the predicted genre." });
+      }
 
-        // Step 3: Use the genre to fetch related tracks from Spotify
-        const accessToken = req.user.access_token;
+      const recommendedTracks = searchResponse.data.tracks.items.map(
+        (track) => ({
+          id: track.id,
+          name: track.name,
+          artist: track.artists[0].name,
+          albumArt: track.album.images[0]?.url,
+          previewUrl: track.preview_url,
+          uri: track.uri,
+          duration_ms: track.duration_ms,
+          popularity: track.popularity,
+          explicit: track.explicit,
+        })
+      );
 
-        // Step 4: Search for tracks using the first genre from Flask response
-        const searchResponse = await axios.get("https://api.spotify.com/v1/search", {
-            headers: { Authorization: `Bearer ${accessToken}` },
-            params: { q: `genre:"${genre}"`, type: "track", limit: 50 }
-        });
-
-        // Map the search results to your desired track data
-        const recommendedTracks = searchResponse.data.tracks.items.map(track => ({
-            id: track.id,
-            name: track.name,
-            artist: track.artists[0].name,
-            albumArt: track.album.images[0]?.url,
-            previewUrl: track.preview_url,
-            uri: track.uri
-        }));
-
-        return res.status(200).json({
-            message: `Recommendations based on the genre: ${genre}`,
-            tracks: recommendedTracks,
-        });
-
+      return res.status(200).json({
+        message: `Recommendations based on predicted genres: ${predictions.join(
+          ", "
+        )}`,
+        primaryGenre,
+        allGenres: predictions,
+        tracks: recommendedTracks,
+      });
     } catch (error) {
-        console.error("Error in getRecommendations:", error.response?.data || error.message);
-        res.status(500).json({
-            error: "Failed to fetch recommendations",
-            details: error.response?.data || error.message,
-        });
+      console.error(
+        "Error in getRecommendations:",
+        error.response?.data || error.message
+      );
+      res.status(500).json({
+        error: "Failed to fetch recommendations",
+        details: error.response?.data || error.message,
+      });
     }
-},
-
+  },
 
   getArtist: async (req, res) => {
     try {
