@@ -1,151 +1,276 @@
-import { useState, useEffect, useRef } from "react";
-import { Box, IconButton, Typography, CircularProgress } from "@mui/material";
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  Box,
+  IconButton,
+  Typography,
+  CircularProgress,
+  Tooltip,
+  Button,
+  Stack,
+} from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { motion, AnimatePresence } from "framer-motion";
 import ThumbUpRoundedIcon from "@mui/icons-material/ThumbUpRounded";
 import ThumbDownRoundedIcon from "@mui/icons-material/ThumbDownRounded";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import PauseRoundedIcon from "@mui/icons-material/PauseRounded";
+import ChangeCircleRoundedIcon from "@mui/icons-material/ChangeCircleRounded";
+import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
+import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import { fetchDeezerPreview } from "../../services/deezerApi";
 import { pre } from "framer-motion/client";
+import Card from "./Card";
 
-const MatchingSection = ({ selectedSong, isMatching, onMatch }) => {
+const MatchingSection = ({
+  selectedSong,
+  isMatching,
+  onMatch,
+  onChangeClick,
+  onGenreUpdate,
+  currentGenre,
+  seedSongs = [],
+}) => {
   const [recommendations, setRecommendations] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [direction, setDirection] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const audioRef = useRef(null);
-  const progressIntervalRef = useRef(null);
+  const progressInterval = useRef(null);
+  const [isChangingSong, setIsChangingSong] = useState(false);
+  const [error, setError] = useState(null);
+  const fetchController = useRef(null);
 
+  // Store the callback function in a ref to prevent infinite loops
+  const onGenreUpdateRef = useRef(onGenreUpdate);
   useEffect(() => {
-    const fetchRecommendations = async () => {
-      setIsLoading(true);
-      try {
-        const previewUrl = await fetchDeezerPreview(selectedSong.name, selectedSong.artist) 
-        if(!previewUrl) {
-          console.error("No available URL");
-           return ;
-          }
-        console.log("Fetching recommendations for track:", previewUrl);
-        const response = await fetch(
-          `http://localhost:5001/api/recommendations/${selectedSong.id}`,
-          {method : "POST",
-            headers: {
-              Accept: "application/json",
-              "Content-Type": "application/json",
-            },
-            credentials: "include",
-            body : JSON.stringify({previewUrl}),
-          }
-        );
+    onGenreUpdateRef.current = onGenreUpdate;
+  }, [onGenreUpdate]);
 
-        const text = await response.text();
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch (e) {
-          console.error("Failed to parse response:", text);
-          throw new Error("Invalid response format");
-        }
+  // Store seedSongs in a ref to prevent dependency changes
+  const seedSongsRef = useRef(seedSongs);
+  useEffect(() => {
+    seedSongsRef.current = seedSongs;
+  }, [seedSongs]);
 
-        if (!response.ok) {
-          console.error("Response not ok:", response.status, data);
-          if (data.spotifyError) {
-            console.error("Spotify API Error:", data.spotifyError);
-          }
-          throw new Error(
-            data.error || `HTTP error! status: ${response.status}`
-          );
-        }
+  const fetchRecommendations = useCallback(async () => {
+    if (!selectedSong) return;
 
-        if (!data.tracks || !data.tracks.length) {
-          console.log("No recommendations returned");
-          setRecommendations([]);
-          return;
-        }
+    // Cancel any existing fetch
+    if (fetchController.current) {
+      fetchController.current.abort();
+    }
+    fetchController.current = new AbortController();
 
-        console.log("Received recommendations:", data.tracks.length);
-        setRecommendations(data.tracks);
-      } catch (error) {
-        console.error("Error fetching recommendations:", error);
-        console.error("Error details:", error.message);
-        setRecommendations([]);
-      } finally {
-        setIsLoading(false);
+    setIsLoading(true);
+    setError(null);
+    try {
+      const previewUrl = await fetchDeezerPreview(
+        selectedSong.name,
+        selectedSong.artist
+      );
+
+      if (!previewUrl) {
+        throw new Error("No preview URL available for this track");
       }
-    };
 
+      const response = await fetch(
+        `http://localhost:5001/api/recommendations/${selectedSong.id}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            previewUrl,
+            seedTracks:
+              seedSongsRef.current?.filter(
+                (song) => song.id !== selectedSong.id
+              ) || [],
+          }),
+          signal: fetchController.current.signal,
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch recommendations");
+      }
+
+      const data = await response.json();
+
+      if (!data.tracks || data.tracks.length === 0) {
+        throw new Error(
+          "No recommendations found for this combination of songs"
+        );
+      }
+
+      if (data.primaryGenre) {
+        onGenreUpdateRef.current(selectedSong.id, data.primaryGenre);
+      }
+
+      setRecommendations(data.tracks);
+      setCurrentIndex(0);
+    } catch (error) {
+      if (error.name === "AbortError") {
+        return;
+      }
+      console.error("Error fetching recommendations:", error);
+      setError(error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedSong]); // Only depend on selectedSong
+
+  // Single useEffect for fetching
+  useEffect(() => {
     if (selectedSong) {
       fetchRecommendations();
     }
-  }, [selectedSong]);
 
-  const handleSwipe = (dir) => {
-    setDirection(dir);
-    if (dir === "right") {
+    return () => {
+      if (fetchController.current) {
+        fetchController.current.abort();
+      }
+    };
+  }, [selectedSong, fetchRecommendations]);
+
+  const handleSwipe = (direction) => {
+    if (direction === "right") {
       onMatch(recommendations[currentIndex]);
     }
-
-    // Reset for next card
-    setTimeout(() => {
-      setDirection(null);
-      setCurrentIndex((prev) => prev + 1);
-    }, 300);
+    setCurrentIndex((prev) => prev + 1);
   };
 
-  const handlePlayPause = async () => {
+  const handlePlayPause = useCallback(() => {
     const currentTrack = recommendations[currentIndex];
+    if (!currentTrack?.previewUrl) {
+      console.log("No preview available");
+      return;
+    }
 
     if (!audioRef.current) {
-      // First time playing this track
-      const previewUrl = await fetchDeezerPreview(
-        currentTrack.name,
-        currentTrack.artist
-      );
-      if (!previewUrl) {
-        console.log("No preview available");
-        return;
-      }
-
+      // Use the Deezer preview URL
+      const previewUrl = currentTrack.previewUrl; // This should be the Deezer preview URL
       audioRef.current = new Audio(previewUrl);
       audioRef.current.addEventListener("ended", () => {
         setIsPlaying(false);
         setProgress(0);
-        clearInterval(progressIntervalRef.current);
+        clearInterval(progressInterval.current);
       });
     }
 
     if (isPlaying) {
       audioRef.current.pause();
-      clearInterval(progressIntervalRef.current);
+      clearInterval(progressInterval.current);
     } else {
-      audioRef.current.play();
-      // Update progress every 100ms
-      progressIntervalRef.current = setInterval(() => {
-        const currentProgress = (audioRef.current.currentTime / 30) * 100; // 30 seconds total
-        setProgress(currentProgress);
+      // Play the Deezer preview
+      audioRef.current.play().catch((error) => {
+        console.error("Error playing audio:", error);
+        setIsPlaying(false);
+      });
+      progressInterval.current = setInterval(() => {
+        if (audioRef.current) {
+          setProgress((audioRef.current.currentTime / 30) * 100); // Deezer previews are 30 seconds
+        }
       }, 100);
     }
-
     setIsPlaying(!isPlaying);
+  }, [isPlaying, recommendations, currentIndex]);
+
+  // Reset audio when track changes
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (progressInterval.current) {
+      clearInterval(progressInterval.current);
+    }
+    setIsPlaying(false);
+    setProgress(0);
+  }, [currentIndex]);
+
+  const handleRetry = () => {
+    fetchRecommendations();
   };
 
-  // Cleanup audio when changing tracks or unmounting
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      if (progressIntervalRef.current) {
-        clearInterval(progressIntervalRef.current);
-      }
-      setIsPlaying(false);
-      setProgress(0);
-    };
-  }, [currentIndex]);
+  const LoadingState = () => (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: "20px",
+      }}
+    >
+      <CircularProgress
+        size={60}
+        sx={{
+          color: "#6366F1",
+          "& .MuiCircularProgress-circle": {
+            strokeLinecap: "round",
+          },
+        }}
+      />
+      <Typography
+        sx={{
+          color: alpha("#fff", 0.7),
+          textAlign: "center",
+          maxWidth: "300px",
+        }}
+      >
+        {isChangingSong
+          ? "Finding recommendations based on your seed songs..."
+          : "Analyzing song and finding matches..."}
+      </Typography>
+    </motion.div>
+  );
+
+  const ErrorState = ({ message, onRetry, onChangeClick }) => (
+    <Box sx={{ textAlign: "center", p: 3 }}>
+      <Typography sx={{ color: alpha("#fff", 0.7), mb: 2 }}>
+        {message}
+      </Typography>
+      <Stack direction="row" spacing={2} justifyContent="center">
+        <Button
+          onClick={onRetry}
+          variant="outlined"
+          startIcon={<RefreshRoundedIcon />}
+          sx={{
+            color: "#6366F1",
+            borderColor: "#6366F1",
+            "&:hover": {
+              borderColor: "#4F46E5",
+              background: alpha("#6366F1", 0.1),
+            },
+          }}
+        >
+          Retry
+        </Button>
+        <Button
+          onClick={onChangeClick}
+          variant="outlined"
+          startIcon={<ChangeCircleRoundedIcon />}
+          sx={{
+            color: "#6366F1",
+            borderColor: "#6366F1",
+            "&:hover": {
+              borderColor: "#4F46E5",
+              background: alpha("#6366F1", 0.1),
+            },
+          }}
+        >
+          Change Song
+        </Button>
+      </Stack>
+    </Box>
+  );
 
   if (isLoading) {
     return (
@@ -214,139 +339,162 @@ const MatchingSection = ({ selectedSong, isMatching, onMatch }) => {
         justifyContent: "center",
         height: "100%",
         position: "relative",
+        pt: 8,
       }}
     >
-      <AnimatePresence>
-        <motion.div
-          key={currentTrack.id}
-          initial={{ scale: 0.95, opacity: 0 }}
-          animate={{
-            scale: 1,
-            opacity: 1,
-            x: direction === "left" ? -300 : direction === "right" ? 300 : 0,
-            rotate: direction === "left" ? -20 : direction === "right" ? 20 : 0,
-          }}
-          exit={{ scale: 0.95, opacity: 0 }}
-          transition={{ duration: 0.3 }}
-          style={{ width: "100%", maxWidth: 400 }}
-        >
-          <Box
-            sx={{
-              position: "relative",
-              borderRadius: 4,
-              overflow: "hidden",
-              aspectRatio: "1",
-              background: `linear-gradient(135deg, ${alpha(
-                "#fff",
-                0.1
-              )} 0%, ${alpha("#6366F1", 0.1)} 100%)`,
-              backdropFilter: "blur(10px)",
-              border: `1px solid ${alpha("#fff", 0.1)}`,
-              boxShadow: `0 8px 32px ${alpha("#000", 0.2)}`,
-              "&::before": {
-                content: '""',
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                border: "2px solid #22c55e",
-                borderRadius: "inherit",
-                clipPath: `polygon(0 0, ${progress}% 0, ${progress}% 100%, 0 100%)`,
-                transition: "clip-path 0.1s linear",
-                zIndex: 2,
-              },
+      <AnimatePresence mode="sync">
+        {currentGenre && !isLoading && (
+          <motion.div
+            key="genre"
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3 }}
+            style={{
+              position: "absolute",
+              top: 20,
+              left: "50%",
+              transform: "translateX(-50%)",
+              zIndex: 10,
+              display: "flex",
+              alignItems: "center",
+              gap: "16px",
             }}
           >
-            <img
-              src={currentTrack.albumArt}
-              alt={currentTrack.name}
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-              }}
-            />
             <Box
               sx={{
-                position: "absolute",
-                bottom: 0,
-                left: 0,
-                right: 0,
-                p: 3,
-                background:
-                  "linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 100%)",
+                display: "flex",
+                alignItems: "center",
+                gap: 2,
               }}
             >
-              <Typography variant="h5" sx={{ color: "#fff", mb: 1 }}>
-                {currentTrack.name}
-              </Typography>
-              <Typography sx={{ color: alpha("#fff", 0.7) }}>
-                {currentTrack.artist}
-              </Typography>
+              <Tooltip
+                title="This genre was detected from your seed song"
+                arrow
+                placement="top"
+              >
+                <Box
+                  sx={{
+                    background:
+                      "linear-gradient(45deg, #6366F1 30%, #818CF8 90%)",
+                    borderRadius: "20px",
+                    padding: "8px 20px",
+                    boxShadow: `0 4px 20px ${alpha("#6366F1", 0.3)}`,
+                    border: `1px solid ${alpha("#fff", 0.2)}`,
+                    cursor: "help",
+                  }}
+                >
+                  <Typography
+                    sx={{
+                      color: "#fff",
+                      fontWeight: 600,
+                      fontSize: "1.1rem",
+                      textTransform: "capitalize",
+                    }}
+                  >
+                    {currentGenre}
+                  </Typography>
+                </Box>
+              </Tooltip>
+
+              <Tooltip title="Add another seed song" arrow placement="top">
+                <IconButton
+                  onClick={onChangeClick}
+                  sx={{
+                    color: alpha("#fff", 0.7),
+                    "&:hover": {
+                      color: "#fff",
+                      background: alpha("#fff", 0.1),
+                    },
+                  }}
+                >
+                  <ChangeCircleRoundedIcon />
+                </IconButton>
+              </Tooltip>
             </Box>
-            <IconButton
-              onClick={handlePlayPause}
-              sx={{
-                position: "absolute",
-                top: 16,
-                right: 16,
-                background: alpha("#000", 0.5),
-                backdropFilter: "blur(4px)",
-                "&:hover": { background: alpha("#000", 0.7) },
-                zIndex: 3,
-              }}
-            >
-              {isPlaying ? (
-                <PauseRoundedIcon sx={{ color: "#fff" }} />
-              ) : (
-                <PlayArrowRoundedIcon sx={{ color: "#fff" }} />
-              )}
-            </IconButton>
-          </Box>
-        </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
-      <Box
-        sx={{
-          display: "flex",
-          gap: 3,
-          mt: 4,
-        }}
-      >
-        <IconButton
-          onClick={() => handleSwipe("left")}
-          sx={{
-            width: 64,
-            height: 64,
-            background: alpha("#fff", 0.1),
-            backdropFilter: "blur(10px)",
-            "&:hover": {
-              background: alpha("#ef4444", 0.2),
-              transform: "scale(1.1)",
-            },
-          }}
-        >
-          <ThumbDownRoundedIcon sx={{ color: "#ef4444", fontSize: 28 }} />
-        </IconButton>
-        <IconButton
-          onClick={() => handleSwipe("right")}
-          sx={{
-            width: 64,
-            height: 64,
-            background: alpha("#fff", 0.1),
-            backdropFilter: "blur(10px)",
-            "&:hover": {
-              background: alpha("#22c55e", 0.2),
-              transform: "scale(1.1)",
-            },
-          }}
-        >
-          <ThumbUpRoundedIcon sx={{ color: "#22c55e", fontSize: 28 }} />
-        </IconButton>
-      </Box>
+      <AnimatePresence mode="sync">
+        {isLoading ? (
+          <LoadingState />
+        ) : error ? (
+          <ErrorState
+            message={error}
+            onRetry={fetchRecommendations}
+            onChangeClick={onChangeClick}
+          />
+        ) : recommendations.length === 0 ? (
+          <EmptyState onChangeClick={onChangeClick} />
+        ) : currentIndex >= recommendations.length ? (
+          <EndState onChangeClick={onChangeClick} />
+        ) : (
+          <motion.div
+            key="card"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            transition={{ type: "spring", stiffness: 300, damping: 25 }}
+          >
+            <Card
+              track={recommendations[currentIndex]}
+              onSwipe={handleSwipe}
+              isPlaying={isPlaying}
+              onPlayPause={handlePlayPause}
+              progress={progress}
+              hasPreview={Boolean(recommendations[currentIndex]?.previewUrl)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Box>
   );
 };
+
+const EmptyState = ({ onChangeClick }) => (
+  <Box sx={{ textAlign: "center", p: 3 }}>
+    <Typography sx={{ color: alpha("#fff", 0.7), mb: 2 }}>
+      No recommendations found. Try a different song!
+    </Typography>
+    <Button
+      onClick={onChangeClick}
+      variant="outlined"
+      startIcon={<ChangeCircleRoundedIcon />}
+      sx={{
+        color: "#6366F1",
+        borderColor: "#6366F1",
+        "&:hover": {
+          borderColor: "#4F46E5",
+          background: alpha("#6366F1", 0.1),
+        },
+      }}
+    >
+      Change Song
+    </Button>
+  </Box>
+);
+
+const EndState = ({ onChangeClick }) => (
+  <Box sx={{ textAlign: "center" }}>
+    <Typography sx={{ color: alpha("#fff", 0.7), mb: 2 }}>
+      That's all the recommendations we have!
+    </Typography>
+    <Button
+      onClick={onChangeClick}
+      variant="outlined"
+      sx={{
+        color: "#6366F1",
+        borderColor: "#6366F1",
+        "&:hover": {
+          borderColor: "#4F46E5",
+          background: alpha("#6366F1", 0.1),
+        },
+      }}
+    >
+      Add Another Song
+    </Button>
+  </Box>
+);
 
 export default MatchingSection;

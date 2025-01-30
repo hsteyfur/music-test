@@ -184,90 +184,135 @@ const spotifyController = {
   },
 
   getRecommendations: async (req, res) => {
-    const { previewUrl } = req.body;
-    console.log("Received preview URL:", previewUrl);
-
     try {
-      // Call Flask API with the preview URL
+      const { previewUrl, seedTracks = [] } = req.body;
+      const trackId = req.params.trackId;
+      console.log("Starting recommendation process for track:", trackId);
+
+      // Get genre predictions from Flask
       const flaskResponse = await axios.post("http://127.0.0.1:5000/predict", {
         url: previewUrl,
       });
 
-      console.log("Flask response:", flaskResponse.data);
-
-      // Get the predictions array from the Flask response
-      const predictions = flaskResponse.data.predictions;
-      if (!predictions || predictions.length === 0) {
+      if (
+        !flaskResponse.data.predictions ||
+        flaskResponse.data.predictions.length === 0
+      ) {
         return res
           .status(404)
           .json({ message: "No genres predicted from the audio." });
       }
 
-      // Use the first predicted genre (highest confidence)
-      let primaryGenre = predictions[0];
-      console.log("Using primary genre for recommendations:", primaryGenre);
+      // Map common genre variations
+      const genreMap = {
+        hiphop: "rap",
+        classical: "classical",
+        rock: "rock",
+        pop: "pop",
+        reggae: "reggae",
+        disco: "disco",
+        country: "country",
+        jazz: "jazz",
+        blues: "blues",
+        metal: "metal",
+      };
 
-      // Map 'hiphop' to 'rap' for Spotify's genre system
-      if (primaryGenre === "hiphop") {
-        primaryGenre = "rap";
-      }
-      console.log("Using primary genre for recommendations:", primaryGenre);
+      let primaryGenre = flaskResponse.data.predictions[0];
+      primaryGenre = genreMap[primaryGenre] || primaryGenre;
+      console.log("Primary genre for search:", primaryGenre);
 
-      // Get Spotify recommendations based on the primary genre
-      const accessToken = req.user.access_token;
-      const searchResponse = await axios.get(
-        "https://api.spotify.com/v1/search",
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          params: {
-            q: `genre:${primaryGenre}`,
-            type: "track",
-            limit: 50,
-            market: "US",
-          },
+      try {
+        const accessToken = req.user.access_token;
+
+        // Try multiple search strategies
+        const searchStrategies = [
+          { q: `genre:${primaryGenre}` },
+          { q: primaryGenre }, // Simple genre search
+          { q: `genre:${primaryGenre} year:2015-2024` }, // Add year range for more modern results
+        ];
+
+        let recommendedTracks = [];
+
+        // Try each search strategy until we get results
+        for (const strategy of searchStrategies) {
+          console.log("Trying search strategy:", strategy);
+          const limit = 50;
+          const maxOffset = 1000; // Maximum offset for search
+          const randomOffset = Math.floor(Math.random() * maxOffset); // Pick a random offset
+
+          const searchResponse = await axios.get(
+            "https://api.spotify.com/v1/search",
+            {
+              headers: { Authorization: `Bearer ${accessToken}` },
+              params: {
+                ...strategy,
+                type: "track",
+                limit: 50,
+                market: "US",
+              },
+            }
+          );
+
+          if (searchResponse.data.tracks?.items?.length > 0) {
+            // Filter out the seed track and any existing seed tracks
+            const seedTrackIds = [
+              trackId,
+              ...seedTracks.map((track) => track.id),
+            ];
+            recommendedTracks = searchResponse.data.tracks.items
+              .filter((track) => !seedTrackIds.includes(track.id))
+              .map((track) => ({
+                id: track.id,
+                name: track.name,
+                artist: track.artists[0].name,
+                albumArt: track.album.images[0]?.url,
+                previewUrl: track.preview_url,
+                uri: track.uri,
+                duration_ms: track.duration_ms,
+                popularity: track.popularity,
+                explicit: track.explicit,
+                artistId: track.artists[0].id,
+              }));
+
+            if (recommendedTracks.length > 0) {
+              break; // Exit loop if we found tracks
+            }
+          }
         }
-      );
 
-      if (!searchResponse.data.tracks || !searchResponse.data.tracks.items) {
-        console.error(
-          "No tracks found in Spotify response:",
-          searchResponse.data
+        if (recommendedTracks.length === 0) {
+          console.log("No tracks found with any search strategy");
+          return res.status(404).json({
+            message: "No tracks found for the predicted genre",
+            genre: primaryGenre,
+          });
+        }
+
+        return res.status(200).json({
+          message: `Recommendations based on predicted genres: ${flaskResponse.data.predictions.join(
+            ", "
+          )}`,
+          primaryGenre,
+          allGenres: flaskResponse.data.predictions,
+          tracks: recommendedTracks,
+        });
+      } catch (spotifyError) {
+        console.error("Spotify API error details:", {
+          status: spotifyError.response?.status,
+          statusText: spotifyError.response?.statusText,
+          data: spotifyError.response?.data,
+        });
+        throw new Error(
+          `Failed to fetch tracks from Spotify: ${
+            spotifyError.response?.data?.error?.message || spotifyError.message
+          }`
         );
-        return res
-          .status(404)
-          .json({ message: "No tracks found for the predicted genre." });
       }
-
-      const recommendedTracks = searchResponse.data.tracks.items.map(
-        (track) => ({
-          id: track.id,
-          name: track.name,
-          artist: track.artists[0].name,
-          albumArt: track.album.images[0]?.url,
-          previewUrl: track.preview_url,
-          uri: track.uri,
-          duration_ms: track.duration_ms,
-          popularity: track.popularity,
-          explicit: track.explicit,
-        })
-      );
-
-      return res.status(200).json({
-        message: `Recommendations based on predicted genres: ${predictions.join(
-          ", "
-        )}`,
-        primaryGenre,
-        allGenres: predictions,
-        tracks: recommendedTracks,
-      });
     } catch (error) {
-      console.error(
-        "Error in getRecommendations:",
-        error.response?.data || error.message
-      );
+      console.error("Error in getRecommendations:", error.message);
       res.status(500).json({
         error: "Failed to fetch recommendations",
-        details: error.response?.data || error.message,
+        details: error.message,
       });
     }
   },
@@ -342,6 +387,56 @@ const spotifyController = {
       return res.status(500).json({
         error: "Failed to create playlist",
         details: error.response?.data || error.message,
+      });
+    }
+  },
+
+  getUserPlaylists: async (req, res) => {
+    try {
+      const accessToken = req.user.access_token;
+
+      const response = await axios.get(
+        "https://api.spotify.com/v1/me/playlists",
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          params: {
+            limit: 50, // Adjust this number based on how many playlists you want to fetch
+          },
+        }
+      );
+
+      // Add total tracks count for each playlist
+      const playlistsWithTracks = response.data.items.map((playlist) => ({
+        id: playlist.id,
+        name: playlist.name,
+        description: playlist.description,
+        images: playlist.images,
+        tracks: {
+          total: playlist.tracks.total,
+        },
+        owner: playlist.owner,
+        public: playlist.public,
+        collaborative: playlist.collaborative,
+        uri: playlist.uri,
+      }));
+
+      res.status(200).json({
+        items: playlistsWithTracks,
+        total: response.data.total,
+        limit: response.data.limit,
+        offset: response.data.offset,
+      });
+    } catch (error) {
+      console.error(
+        "Error fetching playlists:",
+        error.response?.data || error.message
+      );
+      res.status(error.response?.status || 500).json({
+        error: "Failed to fetch playlists",
+        details: error.response?.data?.error || error.message,
       });
     }
   },

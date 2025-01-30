@@ -1,21 +1,17 @@
-import {
-  Box,
-  Typography,
-  IconButton,
-  ListItem,
-  Tooltip,
-  Button,
-} from "@mui/material";
+import { Box, Typography, IconButton, Tooltip, Button } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import DeleteRoundedIcon from "@mui/icons-material/DeleteRounded";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import DragIndicatorRoundedIcon from "@mui/icons-material/DragIndicatorRounded";
 import PlaylistAddRoundedIcon from "@mui/icons-material/PlaylistAddRounded";
+import StarsRoundedIcon from "@mui/icons-material/StarsRounded";
 import { motion, AnimatePresence, Reorder } from "framer-motion";
 import { createPlaylist } from "../../services/spotifyApi";
+import HelpOutlineRoundedIcon from "@mui/icons-material/HelpOutlineRounded";
 
 const SelectedTracksPanel = ({
   tracks = [],
+  seedSongs = [],
   onTrackRemove,
   onTracksReorder,
 }) => {
@@ -53,6 +49,8 @@ const SelectedTracksPanel = ({
       // Handle error (show error message to user)
     }
   };
+
+  const isSeedSong = (trackId) => seedSongs.some((song) => song.id === trackId);
 
   return (
     <Box
@@ -94,6 +92,25 @@ const SelectedTracksPanel = ({
         >
           {tracks.length} tracks
         </Typography>
+        <Tooltip
+          title={
+            <Box sx={{ p: 1 }}>
+              <Typography sx={{ fontSize: "0.875rem", mb: 1 }}>
+                ⭐ Tracks with a star are seed songs that influence
+                recommendations
+              </Typography>
+              <Typography sx={{ fontSize: "0.875rem" }}>
+                Drag tracks to reorder them in your playlist
+              </Typography>
+            </Box>
+          }
+          arrow
+          placement="top"
+        >
+          <IconButton size="small" sx={{ color: alpha("#fff", 0.5) }}>
+            <HelpOutlineRoundedIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
       </Box>
 
       <Box
@@ -132,6 +149,9 @@ const SelectedTracksPanel = ({
               listStyle: "none",
               margin: 0,
               padding: 0,
+              overflowY: "auto",
+              maxHeight: "60vh",
+              overflowX: "hidden",
             }}
           >
             <AnimatePresence>
@@ -163,11 +183,25 @@ const SelectedTracksPanel = ({
                         gap: 1.5,
                         p: 1,
                         borderRadius: 2,
-                        background: alpha("#fff", 0.03),
-                        border: `1px solid ${alpha("#fff", 0.05)}`,
+                        background: isSeedSong(track.id)
+                          ? `linear-gradient(45deg, ${alpha(
+                              "#6366F1",
+                              0.1
+                            )} 0%, ${alpha("#818CF8", 0.1)} 100%)`
+                          : alpha("#fff", 0.03),
+                        border: `1px solid ${
+                          isSeedSong(track.id)
+                            ? alpha("#6366F1", 0.2)
+                            : alpha("#fff", 0.05)
+                        }`,
                         transition: "all 0.2s ease",
                         "&:hover": {
-                          background: alpha("#fff", 0.05),
+                          background: isSeedSong(track.id)
+                            ? `linear-gradient(45deg, ${alpha(
+                                "#6366F1",
+                                0.15
+                              )} 0%, ${alpha("#818CF8", 0.15)} 100%)`
+                            : alpha("#fff", 0.05),
                           transform: "translateX(4px)",
                           "& .track-actions": {
                             opacity: 1,
@@ -182,6 +216,17 @@ const SelectedTracksPanel = ({
                           "&:active": { cursor: "grabbing" },
                         }}
                       />
+
+                      {isSeedSong(track.id) && (
+                        <Tooltip title="Seed Song">
+                          <StarsRoundedIcon
+                            sx={{
+                              color: "#6366F1",
+                              fontSize: "1.2rem",
+                            }}
+                          />
+                        </Tooltip>
+                      )}
 
                       <Box
                         sx={{
@@ -281,45 +326,55 @@ const SelectedTracksPanel = ({
         )}
       </Box>
 
-      <Button
-        fullWidth
-        variant="contained"
-        startIcon={<PlaylistAddRoundedIcon />}
-        disabled={tracks.length === 0}
-        onClick={() => onCreatePlaylist(tracks)}
-        sx={{
-          background: "linear-gradient(45deg, #6366F1 30%, #818CF8 90%)",
-          borderRadius: "12px",
-          textTransform: "none",
-          fontSize: "0.9rem",
-          fontWeight: 600,
-          padding: "12px",
-          boxShadow: "0 4px 12px rgba(99, 102, 241, 0.2)",
-          transition: "all 0.2s ease-in-out",
-          border: `1px solid ${alpha("#fff", 0.1)}`,
-          backdropFilter: "blur(8px)",
-          "&:hover": {
-            background: "linear-gradient(45deg, #4F46E5 30%, #6366F1 90%)",
-            transform: "translateY(-1px)",
-            boxShadow: "0 6px 16px rgba(99, 102, 241, 0.3)",
-          },
-          "&:active": {
-            transform: "translateY(1px)",
-            boxShadow: "0 2px 8px rgba(99, 102, 241, 0.2)",
-          },
-          "&.Mui-disabled": {
-            background: alpha("#6366F1", 0.1),
-            color: alpha("#fff", 0.4),
-            border: `1px solid ${alpha("#fff", 0.05)}`,
-            boxShadow: "none",
-          },
-          "& .MuiButton-startIcon": {
-            marginRight: "8px",
-          },
-        }}
+      <Tooltip
+        title="Create a new Spotify playlist with all your selected tracks"
+        arrow
+        placement="top"
       >
-        Create Playlist
-      </Button>
+        <span>
+          {" "}
+          {/* Wrapper needed for disabled button tooltip */}
+          <Button
+            fullWidth
+            variant="contained"
+            startIcon={<PlaylistAddRoundedIcon />}
+            disabled={tracks.length === 0}
+            onClick={() => onCreatePlaylist(tracks)}
+            sx={{
+              background: "linear-gradient(45deg, #6366F1 30%, #818CF8 90%)",
+              borderRadius: "12px",
+              textTransform: "none",
+              fontSize: "0.9rem",
+              fontWeight: 600,
+              padding: "12px",
+              boxShadow: "0 4px 12px rgba(99, 102, 241, 0.2)",
+              transition: "all 0.2s ease-in-out",
+              border: `1px solid ${alpha("#fff", 0.1)}`,
+              backdropFilter: "blur(8px)",
+              "&:hover": {
+                background: "linear-gradient(45deg, #4F46E5 30%, #6366F1 90%)",
+                transform: "translateY(-1px)",
+                boxShadow: "0 6px 16px rgba(99, 102, 241, 0.3)",
+              },
+              "&:active": {
+                transform: "translateY(1px)",
+                boxShadow: "0 2px 8px rgba(99, 102, 241, 0.2)",
+              },
+              "&.Mui-disabled": {
+                background: alpha("#6366F1", 0.1),
+                color: alpha("#fff", 0.4),
+                border: `1px solid ${alpha("#fff", 0.05)}`,
+                boxShadow: "none",
+              },
+              "& .MuiButton-startIcon": {
+                marginRight: "8px",
+              },
+            }}
+          >
+            Create Playlist
+          </Button>
+        </span>
+      </Tooltip>
     </Box>
   );
 };

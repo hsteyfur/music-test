@@ -26,4 +26,7 @@ router.post("/playlist", requireAuth, spotifyController.createPlaylist);
 
 router.get("/artists/:artistId", requireAuth, spotifyController.getArtist);
 
+// Add this new route
+router.get("/playlists", requireAuth, spotifyController.getUserPlaylists);
+
 module.exports = router;

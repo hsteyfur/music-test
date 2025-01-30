@@ -60,14 +60,7 @@ function StatsSection() {
   };
 
   return (
-    <Box
-      sx={{
-        py: 4,
-        px: { xs: 2, sm: 4 },
-        background:
-          "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.3) 100%)",
-      }}
-    >
+    <Box sx={{}}>
       <Typography
         variant="h5"
         sx={{

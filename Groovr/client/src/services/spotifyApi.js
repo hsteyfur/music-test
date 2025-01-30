@@ -151,4 +151,22 @@ export const getUserProfile = async () => {
   }
 };
 
+export const getUserPlaylists = async () => {
+  try {
+    const response = await fetch("http://localhost:5001/api/playlists", {
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch playlists");
+    }
+
+    const data = await response.json();
+    return data.items;
+  } catch (error) {
+    console.error("Error fetching playlists:", error);
+    throw error;
+  }
+};
+
 export default spotifyApi;

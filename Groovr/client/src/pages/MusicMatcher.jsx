@@ -16,12 +16,15 @@ const MusicMatcher = () => {
   const { isAuthenticated } = useAuth();
   const [selectedSong, setSelectedSong] = useState(null);
   const [isMatching, setIsMatching] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [seedSongs, setSeedSongs] = useState([]);
   const [playlist, setPlaylist] = useState({
     name: "My New Playlist",
     description: "Created with Groovr",
     tracks: [],
   });
   const [user, setUser] = useState(null);
+  const [currentGenre, setCurrentGenre] = useState(null);
 
   useEffect(() => {
     const fetchUserProfile = async () => {
@@ -37,21 +40,44 @@ const MusicMatcher = () => {
       fetchUserProfile();
     }
   }, [isAuthenticated]);
+
   const handleSongSelect = async (track) => {
     try {
-      // Get preview URL from Deezer
       const previewUrl = await fetchDeezerPreview(track.name, track.artist);
       if (!previewUrl) {
         console.log("Preview not available.");
-        // Continue even if preview is not available
       }
+
+      // Add to seed songs with pending genre
+      setSeedSongs((prev) => [...prev, { ...track, genre: "pending" }]);
+
+      // Add the selected song to playlist automatically if it's not already there
+      setPlaylist((prev) => ({
+        ...prev,
+        tracks: prev.tracks.some((t) => t.id === track.id)
+          ? prev.tracks
+          : [...prev.tracks, track],
+      }));
 
       setSelectedSong(track);
       setIsMatching(true);
+      setShowSearch(false);
     } catch (error) {
       console.error("Error handling song selection:", error);
     }
   };
+
+  const handleGenreUpdate = (songId, genre) => {
+    console.log(`Updating genre for song ${songId} to ${genre}`);
+    setSeedSongs((prev) =>
+      prev.map((song) => (song.id === songId ? { ...song, genre } : song))
+    );
+  };
+
+  const handleChangeClick = () => {
+    setShowSearch(true);
+  };
+
   return (
     <Box
       sx={{
@@ -90,8 +116,8 @@ const MusicMatcher = () => {
           alignItems: "center",
         }}
       >
-        {!selectedSong ? (
-          // Initial Search View
+        {!selectedSong || showSearch ? (
+          // Initial Search View or Change Song View
           <Box
             sx={{
               width: "100%",
@@ -101,23 +127,27 @@ const MusicMatcher = () => {
               transform: "translateY(-5vh)",
             }}
           >
-            <Typography
-              variant="h2"
-              sx={{
-                fontWeight: 800,
-                background: "linear-gradient(90deg, #6366F1 0%, #A855F7 100%)",
-                backgroundClip: "text",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                fontFamily: "'Righteous', cursive",
-                cursor: "pointer",
-                letterSpacing: "0.5px",
-                mb: 3,
-                fontSize: { xs: "3.5rem", md: "5.5rem" },
-              }}
-            >
-              GROOVR
-            </Typography>
+            {!selectedSong ? (
+              <Typography
+                variant="h2"
+                sx={{
+                  fontWeight: 800,
+                  background:
+                    "linear-gradient(90deg, #6366F1 0%, #A855F7 100%)",
+                  backgroundClip: "text",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  fontFamily: "'Righteous', cursive",
+                  cursor: "pointer",
+                  letterSpacing: "0.5px",
+                  mb: 3,
+                  fontSize: { xs: "3.5rem", md: "5.5rem" },
+                }}
+              >
+                GROOVR
+              </Typography>
+            ) : null}
+
             <Typography
               sx={{
                 color: alpha("#fff", 0.7),
@@ -128,8 +158,9 @@ const MusicMatcher = () => {
                 mx: "auto",
               }}
             >
-              Start by selecting a song you love, and we'll help you discover
-              similar tracks to create your perfect playlist.
+              {!selectedSong
+                ? "Start by selecting a song you love, and we'll help you discover similar tracks to create your perfect playlist."
+                : "Select another song to add more recommendations to your playlist."}
             </Typography>
 
             <SearchSection onSongSelect={handleSongSelect} />
@@ -145,7 +176,11 @@ const MusicMatcher = () => {
               width: "100%",
             }}
           >
-            <PlaylistPanel playlist={playlist} onPlaylistUpdate={setPlaylist} />
+            <PlaylistPanel
+              playlist={playlist}
+              onPlaylistUpdate={setPlaylist}
+              seedSongs={seedSongs}
+            />
 
             <MatchingSection
               selectedSong={selectedSong}
@@ -156,15 +191,21 @@ const MusicMatcher = () => {
                   tracks: [...prev.tracks, track],
                 }));
               }}
+              onChangeClick={handleChangeClick}
+              onGenreUpdate={handleGenreUpdate}
+              currentGenre={currentGenre}
+              seedSongs={seedSongs}
             />
 
             <SelectedTracksPanel
               tracks={playlist.tracks}
+              seedSongs={seedSongs}
               onTrackRemove={(trackId) => {
                 setPlaylist((prev) => ({
                   ...prev,
                   tracks: prev.tracks.filter((t) => t.id !== trackId),
                 }));
+                setSeedSongs((prev) => prev.filter((s) => s.id !== trackId));
               }}
               onTracksReorder={(newTracks) => {
                 setPlaylist((prev) => ({

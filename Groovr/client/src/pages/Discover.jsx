@@ -1,33 +1,37 @@
 import { useEffect, useState } from "react";
-import { Box } from "@mui/material";
+import { Box, Grid, Container } from "@mui/material";
 import { useAuth } from "../context/AuthContext";
-import { getUserProfile } from "../services/spotifyApi";
+import { getUserProfile, getUserPlaylists } from "../services/spotifyApi";
 import Header from "../components/Header";
 import StatsSection from "../components/StatsSection";
+import PlaylistsCard from "../components/stats/PlaylistsCard";
 import { Navigate } from "react-router-dom";
 
 const Discover = () => {
   const { isAuthenticated, isLoading } = useAuth();
   const [user, setUser] = useState(null);
+  const [playlists, setPlaylists] = useState([]);
+  const [isLoadingPlaylists, setIsLoadingPlaylists] = useState(true);
 
   useEffect(() => {
-    const fetchUserProfile = async () => {
+    const fetchData = async () => {
       if (!isAuthenticated) return;
 
       try {
-        const userData = await getUserProfile();
+        const [userData, playlistsData] = await Promise.all([
+          getUserProfile(),
+          getUserPlaylists(),
+        ]);
         setUser(userData);
+        setPlaylists(playlistsData);
       } catch (error) {
-        if (error.message === "UNAUTHORIZED") {
-          // Handle unauthorized error - maybe redirect to login
-          console.error("Session expired");
-        } else {
-          console.error("Error fetching user profile:", error);
-        }
+        console.error("Error fetching data:", error);
+      } finally {
+        setIsLoadingPlaylists(false);
       }
     };
 
-    fetchUserProfile();
+    fetchData();
   }, [isAuthenticated]);
 
   if (isLoading) {
@@ -47,9 +51,22 @@ const Discover = () => {
       }}
     >
       <Header user={user} />
-      <Box sx={{ pt: 10 }}>
-        <StatsSection />
-      </Box>
+      <Container maxWidth="xl" sx={{ pt: 10 }}>
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <StatsSection />
+          </Grid>
+          <Grid item xs={12}>
+            <PlaylistsCard
+              playlists={playlists}
+              isLoading={isLoadingPlaylists}
+              onClick={() => {
+                /* Handle click to show all playlists */
+              }}
+            />
+          </Grid>
+        </Grid>
+      </Container>
     </Box>
   );
 };

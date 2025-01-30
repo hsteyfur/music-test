@@ -47,7 +47,7 @@ function AuthCallback() {
         );
 
         // Redirect to discover page
-        navigate("/discover");
+        navigate("/musicmatcher");
       } catch (error) {
         console.error("Authentication error:", error);
         // Redirect to home page after short delay
